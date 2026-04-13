@@ -1,0 +1,26 @@
+프로젝트: 이미지 영어 텍스트 추출 및 한국어 번역 앱 (Streamlit)
+작성일: 2026-04-12
+
+1. 현재까지 완료된 작업:
+   - Python 3.10+ 환경에서 Streamlit 앱 생성 완료.
+   - OCR 엔진: Tesseract-OCR 설치 및 연동 (경로: C:\Program Files\Tesseract-OCR\tesseract.exe).
+   - 번역 엔진: deep-translator (Google Translate) 연동 완료.
+   - UI: 모든 인터페이스를 한국어로 변경 ("Settings", "이미지 업로드", "번역 결과" 등).
+   - 설정 자동화: Tesseract 경로를 코드 내에서 기본값으로 설정하여 매번 입력하지 않도록 함.
+   - 코드 개선: Streamlit 경고 메시지 (use_container_width) 를 width='stretch'로 수정 완료.
+   - 실행 편의성: StartApp.bat 파일을 만들어 더블클릭으로 실행 가능하도록 함.
+
+2. 현재 코드 구조:
+   - app.py: 메인 실행 파일 (OCR 추출 -> 번역 -> 이미지 위에 결과 표시 -> CSV 다운로드).
+   - requirements.txt: streamlit, pandas, Pillow, pytesseract, deep-translator.
+   - StartApp.bat: 자동 실행 스크립트.
+
+3. 해결해야 할 문제점 / 향후 계획:
+   - 현재는 이미지 1 장만 업로드 가능 → **여러 이미지 동시 업로드 및 일괄 번역 기능 추가 필요**.
+   - 번역 결과가 검은 박스에 흰 글씨로 표시됨 → **원본 배경을 해치지 않는 자연스러운 디자인 개선 필요**.
+   - (선택) OpenAI API 연동을 통한 번역 정확도 향상 검토 중.
+
+4. 참고 사항:
+   - 사용자의 Windows 사용자 이름: 최약형
+   - 작업 폴더 경로: C:\Users\최약형\Desktop\codexstudy
+   - Tesseract 언어 팩: English, Latin script 설치됨.

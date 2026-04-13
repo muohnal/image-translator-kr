@@ -1,0 +1,5 @@
+streamlit>=1.44.0
+pandas>=2.2.0
+Pillow>=10.3.0
+pytesseract>=0.3.10
+deep-translator>=1.11.4
