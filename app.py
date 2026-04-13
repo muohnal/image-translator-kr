@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import BytesIO
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -17,6 +19,8 @@ FONT_CANDIDATES = (
     "C:/Windows/Fonts/AppleGothic.ttf",
     "C:/Windows/Fonts/NanumGothic.ttf",
 )
+ENGLISH_PATTERN = re.compile(r"[A-Za-z]")
+KOREAN_PATTERN = re.compile(r"[가-힣]")
 
 
 @dataclass
@@ -60,11 +64,11 @@ def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def extract_english_lines(image: Image.Image, min_confidence: float) -> list[OCRLine]:
-    """Extract English OCR lines from an image above the confidence threshold."""
+    """Extract OCR lines from an image above the confidence threshold."""
 
     data = pytesseract.image_to_data(
         image,
-        lang="eng",
+        lang="eng+kor",
         output_type=pytesseract.Output.DICT,
     )
 
@@ -121,6 +125,17 @@ def extract_english_lines(image: Image.Image, min_confidence: float) -> list[OCR
     return sorted(lines, key=lambda item: (item.top, item.left))
 
 
+def contains_meaningful_english(text: str) -> bool:
+    """Return True when the text contains enough English to translate."""
+
+    english_chars = len(ENGLISH_PATTERN.findall(text))
+    korean_chars = len(KOREAN_PATTERN.findall(text))
+
+    if english_chars == 0:
+        return False
+    return english_chars >= korean_chars
+
+
 def translate_lines(
     lines: Sequence[OCRLine],
     file_name: str,
@@ -134,6 +149,23 @@ def translate_lines(
         translated_text: str | None
         error_message: str | None
         status: str
+
+        if not contains_meaningful_english(line.text):
+            results.append(
+                TranslationResult(
+                    file_name=file_name,
+                    source_text=line.text,
+                    translated_text=None,
+                    confidence=line.confidence,
+                    left=line.left,
+                    top=line.top,
+                    width=line.width,
+                    height=line.height,
+                    status="skipped_non_english",
+                    error_message=None,
+                )
+            )
+            continue
 
         try:
             translated_text = translator.translate(line.text)
@@ -163,33 +195,63 @@ def translate_lines(
 
 
 def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Image.Image:
-    """Draw OCR boxes and translated labels on a preview image."""
+    """Draw OCR boxes and translated labels with semi-transparent overlays."""
 
-    canvas = image.copy().convert("RGB")
-    draw = ImageDraw.Draw(canvas)
+    canvas = image.copy().convert("RGBA")
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    canvas_width, canvas_height = canvas.size
 
     for result in results:
+        if result.status != "success" or not result.translated_text:
+            continue
+
         left = result.left
         top = result.top
         width = result.width
         height = result.height
-        translated = result.translated_text or "번역 실패"
-        font_size = max(18, min(32, height))
+        translated = result.translated_text
+        font_size = max(16, min(28, height))
         font = load_font(font_size)
+        pad = 6
 
-        draw.rectangle((left, top, left + width, top + height), outline="red", width=2)
+        box_right = min(canvas_width, left + width)
+        box_bottom = min(canvas_height, top + height)
+        box_left = max(0, left)
+        box_top = max(0, top)
+
+        draw.rectangle(
+            (box_left, box_top, box_right, box_bottom),
+            outline=(255, 96, 96, 220),
+            fill=(255, 80, 80, 36),
+            width=2,
+        )
 
         text_bbox = draw.textbbox((0, 0), translated, font=font)
         text_width = text_bbox[2] - text_bbox[0]
         text_height = text_bbox[3] - text_bbox[1]
-        label_top = max(0, top - text_height - 10)
-        draw.rectangle(
-            (left, label_top, left + text_width + 12, label_top + text_height + 8),
-            fill="black",
-        )
-        draw.text((left + 6, label_top + 4), translated, fill="white", font=font)
 
-    return canvas
+        label_left = max(0, left - pad)
+        label_top = max(0, top - text_height - (pad * 2) - 6)
+        label_right = min(canvas_width, label_left + text_width + (pad * 2))
+        label_bottom = min(canvas_height, label_top + text_height + (pad * 2))
+
+        if label_right - label_left < text_width + (pad * 2):
+            label_left = max(0, label_right - text_width - (pad * 2))
+
+        draw.rectangle(
+            (label_left, label_top, label_right, label_bottom),
+            fill=(18, 18, 18, 210),
+        )
+        draw.text(
+            (label_left + pad, label_top + pad),
+            translated,
+            fill=(255, 255, 255, 255),
+            font=font,
+        )
+
+    composited = Image.alpha_composite(canvas, overlay)
+    return composited.convert("RGB")
 
 
 def build_result_dataframe(results: Sequence[TranslationResult]) -> pd.DataFrame:
@@ -209,6 +271,15 @@ def build_result_dataframe(results: Sequence[TranslationResult]) -> pd.DataFrame
         ]
     )
     return dataframe
+
+
+def image_to_png_bytes(image: Image.Image) -> bytes:
+    """Convert an image into PNG bytes for downloading."""
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 def process_uploaded_image(
@@ -260,18 +331,33 @@ def render_results(
     uploaded_file_name: str,
     image: Image.Image,
     preview: Image.Image,
+    results: Sequence[TranslationResult],
     expanded: bool,
 ) -> None:
     """Render original and preview images for a processed upload."""
 
+    translated_count = sum(1 for result in results if result.status == "success")
+    skipped_count = sum(
+        1 for result in results if result.status == "skipped_non_english"
+    )
+    preview_bytes = image_to_png_bytes(preview)
+
     with st.expander(f"이미지 미리보기: {uploaded_file_name}", expanded=expanded):
-        left_col, right_col = st.columns(2)
-        with left_col:
-            st.subheader("원본 이미지")
+        st.caption(
+            f"번역된 줄 {translated_count}개, 한글 또는 비영문으로 건너뛴 줄 {skipped_count}개"
+        )
+        original_tab, preview_tab = st.tabs(["원본", "번역 미리보기"])
+        with original_tab:
             st.image(image, width="stretch")
-        with right_col:
-            st.subheader("번역 미리보기")
+        with preview_tab:
             st.image(preview, width="stretch")
+
+        st.download_button(
+            label=f"{uploaded_file_name} 번역 미리보기 PNG 다운로드",
+            data=preview_bytes,
+            file_name=f"{Path(uploaded_file_name).stem}_translated_preview.png",
+            mime="image/png",
+        )
 
 
 def main() -> None:
@@ -316,6 +402,7 @@ def main() -> None:
                 uploaded_file_name=uploaded_file.name,
                 image=image,
                 preview=preview,
+                results=results,
                 expanded=processed_count == 1,
             )
     except pytesseract.TesseractNotFoundError:
