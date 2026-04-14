@@ -404,7 +404,7 @@ def configure_sidebar() -> tuple[float, str]:
         )
         tesseract_path = st.text_input(
             "Tesseract 실행 파일 경로(선택)",
-            value=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            value="",
             placeholder=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         )
 
@@ -456,6 +456,9 @@ def main() -> None:
     min_confidence, tesseract_path = configure_sidebar()
     if tesseract_path:
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
+    else:
+        # Streamlit Cloud installs Tesseract on PATH, so use automatic lookup there.
+        pytesseract.pytesseract.tesseract_cmd = "tesseract"
 
     uploaded_files = st.file_uploader(
         "이미지를 업로드하세요",
