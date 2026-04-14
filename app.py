@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from io import BytesIO
+import platform
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -21,6 +23,25 @@ FONT_CANDIDATES = (
 )
 ENGLISH_PATTERN = re.compile(r"[A-Za-z]")
 KOREAN_PATTERN = re.compile(r"[가-힣]")
+
+
+def resolve_tesseract_cmd(tesseract_path: str) -> str:
+    """Return the Tesseract command path appropriate for the current runtime."""
+
+    normalized_path = tesseract_path.strip()
+    is_windows = platform.system().lower().startswith("win")
+
+    if normalized_path:
+        if is_windows:
+            return normalized_path
+        if not re.match(r"^[A-Za-z]:\\", normalized_path):
+            return normalized_path
+
+    detected_tesseract = shutil.which("tesseract")
+    if detected_tesseract:
+        return detected_tesseract
+
+    return "tesseract"
 
 
 @dataclass
@@ -454,11 +475,7 @@ def main() -> None:
     )
 
     min_confidence, tesseract_path = configure_sidebar()
-    if tesseract_path:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_path
-    else:
-        # Streamlit Cloud installs Tesseract on PATH, so use automatic lookup there.
-        pytesseract.pytesseract.tesseract_cmd = "tesseract"
+    pytesseract.pytesseract.tesseract_cmd = resolve_tesseract_cmd(tesseract_path)
 
     uploaded_files = st.file_uploader(
         "이미지를 업로드하세요",
