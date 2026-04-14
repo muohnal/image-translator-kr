@@ -12,10 +12,18 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 from deep_translator import GoogleTranslator
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps, UnidentifiedImageError
+from PIL import (
+    Image,
+    ImageDraw,
+    ImageEnhance,
+    ImageFilter,
+    ImageFont,
+    ImageOps,
+    UnidentifiedImageError,
+)
 
 
-MIN_CONFIDENCE = 30.0
+MIN_CONFIDENCE = 20.0
 FONT_CANDIDATES = (
     "C:/Windows/Fonts/malgun.ttf",
     "C:/Windows/Fonts/AppleGothic.ttf",
@@ -88,22 +96,48 @@ def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
-    """Improve OCR readability by boosting contrast and binarizing the image."""
+    """Improve OCR readability for screenshots and camera images."""
 
     grayscale_image = ImageOps.grayscale(image)
-    contrast_enhancer = ImageEnhance.Contrast(grayscale_image)
-    contrasted_image = contrast_enhancer.enhance(1.8)
-    return contrasted_image.point(lambda pixel: 255 if pixel > 180 else 0, mode="L")
+    denoised_image = grayscale_image.filter(ImageFilter.MedianFilter(size=3))
+    normalized_image = ImageOps.autocontrast(denoised_image)
+    contrast_enhancer = ImageEnhance.Contrast(normalized_image)
+    contrasted_image = contrast_enhancer.enhance(1.5)
+    softened_image = contrasted_image.filter(ImageFilter.GaussianBlur(radius=0.6))
+    renormalized_image = ImageOps.autocontrast(softened_image)
+    return renormalized_image.point(lambda pixel: 255 if pixel > 128 else 0, mode="L")
 
 
 def extract_english_lines(image: Image.Image, min_confidence: float) -> list[OCRLine]:
     """Extract OCR lines from an image above the confidence threshold."""
 
-    data = pytesseract.image_to_data(
-        image,
-        lang="eng+kor",
-        output_type=pytesseract.Output.DICT,
-    )
+    def run_ocr(target_image: Image.Image) -> dict[str, list[str | int | float]]:
+        """Run Tesseract OCR with settings tuned for dense mobile text blocks."""
+
+        return pytesseract.image_to_data(
+            target_image,
+            lang="eng+kor",
+            config="--psm 6",
+            output_type=pytesseract.Output.DICT,
+        )
+
+    data = run_ocr(image)
+    scale_factor = 1.0
+
+    detected_heights = [
+        int(data["height"][index])
+        for index, raw_text in enumerate(data["text"])
+        if str(raw_text).strip()
+    ]
+    if detected_heights:
+        average_height = sum(detected_heights) / len(detected_heights)
+        if average_height < 30:
+            scale_factor = 2.0
+            enlarged_image = image.resize(
+                (int(image.width * scale_factor), int(image.height * scale_factor)),
+                resample=Image.Resampling.LANCZOS,
+            )
+            data = run_ocr(enlarged_image)
 
     grouped: dict[tuple[int, int, int], list[dict[str, float | int | str]]] = {}
     for index, raw_text in enumerate(data["text"]):
@@ -127,10 +161,10 @@ def extract_english_lines(image: Image.Image, min_confidence: float) -> list[OCR
             {
                 "text": text,
                 "conf": confidence,
-                "left": int(data["left"][index]),
-                "top": int(data["top"][index]),
-                "width": int(data["width"][index]),
-                "height": int(data["height"][index]),
+                "left": int(round(int(data["left"][index]) / scale_factor)),
+                "top": int(round(int(data["top"][index]) / scale_factor)),
+                "width": int(round(int(data["width"][index]) / scale_factor)),
+                "height": int(round(int(data["height"][index]) / scale_factor)),
             }
         )
 
