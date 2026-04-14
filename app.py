@@ -20,6 +20,9 @@ FONT_CANDIDATES = (
     "C:/Windows/Fonts/malgun.ttf",
     "C:/Windows/Fonts/AppleGothic.ttf",
     "C:/Windows/Fonts/NanumGothic.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 )
 ENGLISH_PATTERN = re.compile(r"[A-Za-z]")
 KOREAN_PATTERN = re.compile(r"[가-힣]")
