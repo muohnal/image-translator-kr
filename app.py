@@ -10,10 +10,10 @@ import pandas as pd
 import pytesseract
 import streamlit as st
 from deep_translator import GoogleTranslator
-from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps, UnidentifiedImageError
 
 
-MIN_CONFIDENCE = 40.0
+MIN_CONFIDENCE = 30.0
 FONT_CANDIDATES = (
     "C:/Windows/Fonts/malgun.ttf",
     "C:/Windows/Fonts/AppleGothic.ttf",
@@ -61,6 +61,15 @@ def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
             except OSError:
                 continue
     return ImageFont.load_default()
+
+
+def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
+    """Improve OCR readability by boosting contrast and binarizing the image."""
+
+    grayscale_image = ImageOps.grayscale(image)
+    contrast_enhancer = ImageEnhance.Contrast(grayscale_image)
+    contrasted_image = contrast_enhancer.enhance(1.8)
+    return contrasted_image.point(lambda pixel: 255 if pixel > 180 else 0, mode="L")
 
 
 def extract_english_lines(image: Image.Image, min_confidence: float) -> list[OCRLine]:
@@ -194,8 +203,79 @@ def translate_lines(
     return results
 
 
+def wrap_text_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    max_width: int,
+) -> list[str]:
+    """Wrap text into multiple lines so it fits within a target width."""
+
+    words = text.split()
+    if not words:
+        return [text]
+
+    lines: list[str] = []
+    current_line = words[0]
+
+    for word in words[1:]:
+        trial_line = f"{current_line} {word}"
+        trial_width = draw.textlength(trial_line, font=font)
+        if trial_width <= max_width:
+            current_line = trial_line
+            continue
+
+        lines.append(current_line)
+        current_line = word
+
+    lines.append(current_line)
+    return lines
+
+
+def fit_translated_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    box_width: int,
+    box_height: int,
+) -> tuple[ImageFont.FreeTypeFont | ImageFont.ImageFont, list[str], int, int]:
+    """Find a font size and wrapped lines for a translation overlay."""
+
+    min_font_size = 12
+    max_font_size = max(min_font_size, min(28, box_height - 4))
+    max_text_width = max(20, box_width - 12)
+
+    best_font = load_font(min_font_size)
+    best_lines = [text]
+    best_width = 0
+    best_height = 0
+
+    for font_size in range(max_font_size, min_font_size - 1, -1):
+        font = load_font(font_size)
+        lines = wrap_text_to_width(draw, text, font, max_text_width)
+
+        line_heights: list[int] = []
+        line_widths: list[int] = []
+        for line in lines:
+            text_box = draw.textbbox((0, 0), line, font=font)
+            line_widths.append(text_box[2] - text_box[0])
+            line_heights.append(text_box[3] - text_box[1])
+
+        total_height = sum(line_heights) + max(0, len(lines) - 1) * 4
+        total_width = max(line_widths, default=0)
+
+        best_font = font
+        best_lines = lines
+        best_width = total_width
+        best_height = total_height
+
+        if total_width <= max_text_width:
+            return font, lines, total_width, total_height
+
+    return best_font, best_lines, best_width, best_height
+
+
 def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Image.Image:
-    """Draw OCR boxes and translated labels with semi-transparent overlays."""
+    """Replace source text regions with Google Translate-style overlays."""
 
     canvas = image.copy().convert("RGBA")
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
@@ -211,44 +291,47 @@ def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Im
         width = result.width
         height = result.height
         translated = result.translated_text
-        font_size = max(16, min(28, height))
-        font = load_font(font_size)
-        pad = 6
 
         box_right = min(canvas_width, left + width)
         box_bottom = min(canvas_height, top + height)
         box_left = max(0, left)
         box_top = max(0, top)
+        box_width = max(1, box_right - box_left)
+        box_height = max(1, box_bottom - box_top)
+
+        font, wrapped_lines, text_width, text_height = fit_translated_text(
+            draw=draw,
+            text=translated,
+            box_width=box_width,
+            box_height=box_height,
+        )
+
+        padded_text_height = text_height + 12
+        expanded_bottom = min(
+            canvas_height,
+            box_top + max(box_height, padded_text_height),
+        )
 
         draw.rectangle(
-            (box_left, box_top, box_right, box_bottom),
-            outline=(255, 96, 96, 220),
-            fill=(255, 80, 80, 36),
-            width=2,
+            (box_left, box_top, box_right, expanded_bottom),
+            fill=(248, 248, 248, 220),
         )
 
-        text_bbox = draw.textbbox((0, 0), translated, font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_height = text_bbox[3] - text_bbox[1]
+        start_y = box_top + 6
 
-        label_left = max(0, left - pad)
-        label_top = max(0, top - text_height - (pad * 2) - 6)
-        label_right = min(canvas_width, label_left + text_width + (pad * 2))
-        label_bottom = min(canvas_height, label_top + text_height + (pad * 2))
-
-        if label_right - label_left < text_width + (pad * 2):
-            label_left = max(0, label_right - text_width - (pad * 2))
-
-        draw.rectangle(
-            (label_left, label_top, label_right, label_bottom),
-            fill=(18, 18, 18, 210),
-        )
-        draw.text(
-            (label_left + pad, label_top + pad),
-            translated,
-            fill=(255, 255, 255, 255),
-            font=font,
-        )
+        current_y = start_y
+        for line in wrapped_lines:
+            line_box = draw.textbbox((0, 0), line, font=font)
+            line_width = line_box[2] - line_box[0]
+            line_height = line_box[3] - line_box[1]
+            line_x = box_left + max(0, (box_width - line_width) / 2)
+            draw.text(
+                (line_x, current_y),
+                line,
+                fill=(30, 30, 30, 255),
+                font=font,
+            )
+            current_y += line_height + 4
 
     composited = Image.alpha_composite(canvas, overlay)
     return composited.convert("RGB")
@@ -295,7 +378,8 @@ def process_uploaded_image(
         st.error(f"'{uploaded_file.name}' 파일을 이미지로 읽을 수 없습니다.")
         return None
 
-    lines = extract_english_lines(image, min_confidence=min_confidence)
+    preprocessed_image = preprocess_image_for_ocr(image)
+    lines = extract_english_lines(preprocessed_image, min_confidence=min_confidence)
     if not lines:
         st.warning(
             f"'{uploaded_file.name}' 파일에서 조건에 맞는 영어 텍스트를 찾지 못했습니다."
