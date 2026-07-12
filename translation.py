@@ -33,6 +33,17 @@ class TranslationResult:
     error_message: str | None = None
 
 
+def clean_ocr_text(text: str) -> str:
+    """Remove common OCR artifacts so the translator receives cleaner input."""
+
+    tokens = text.split()
+    # Drop tokens with no letters or digits (stray '|', '~', '—' from OCR noise).
+    meaningful_tokens = [
+        token for token in tokens if re.search(r"[A-Za-z0-9가-힣]", token)
+    ]
+    return " ".join(meaningful_tokens)
+
+
 def contains_meaningful_english(text: str) -> bool:
     """Return True when the text contains enough English to translate."""
 
@@ -58,7 +69,9 @@ def translate_lines(
         error_message: str | None
         status: str
 
-        if not contains_meaningful_english(line.text):
+        cleaned_text = clean_ocr_text(line.text)
+
+        if not cleaned_text or not contains_meaningful_english(cleaned_text):
             results.append(
                 TranslationResult(
                     file_name=file_name,
@@ -76,11 +89,11 @@ def translate_lines(
             continue
 
         try:
-            translated_text = translator.translate(line.text)
+            translated_text = translator.translate(cleaned_text)
             error_message = None
             status = "success"
         except (TranslationError, ConnectionError, TimeoutError) as exc:
-            logger.warning("Translation failed for %r: %s", line.text, exc)
+            logger.warning("Translation failed for %r: %s", cleaned_text, exc)
             translated_text = None
             error_message = str(exc)
             status = "translation_failed"

@@ -145,10 +145,12 @@ def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Im
         height = result.height
         translated = result.translated_text
 
-        box_right = min(canvas_width, left + width)
-        box_bottom = min(canvas_height, top + height)
-        box_left = max(0, left)
-        box_top = max(0, top)
+        # Pad the OCR box so glyph edges of the source text are fully covered.
+        cover_margin = max(2, height // 8)
+        box_left = max(0, left - cover_margin)
+        box_top = max(0, top - cover_margin)
+        box_right = min(canvas_width, left + width + cover_margin)
+        box_bottom = min(canvas_height, top + height + cover_margin)
         box_width = max(1, box_right - box_left)
         box_height = max(1, box_bottom - box_top)
 
@@ -159,6 +161,12 @@ def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Im
             box_height=box_height,
         )
 
+        # Widen the box when the translated text is wider than the source box.
+        needed_right = box_left + text_width + 12
+        if needed_right > box_right:
+            box_right = min(canvas_width, needed_right)
+            box_width = max(1, box_right - box_left)
+
         padded_text_height = text_height + 12
         expanded_bottom = min(
             canvas_height,
@@ -167,10 +175,11 @@ def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Im
 
         draw.rectangle(
             (box_left, box_top, box_right, expanded_bottom),
-            fill=(248, 248, 248, 220),
+            fill=(248, 248, 248, 255),
         )
 
-        start_y = box_top + 6
+        visible_height = expanded_bottom - box_top
+        start_y = box_top + max(4, (visible_height - text_height) // 2)
 
         current_y = start_y
         for line in wrapped_lines:
