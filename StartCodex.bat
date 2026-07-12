@@ -1,3 +1,3 @@
 @echo off
-cd /d C:\Users\최약형\Desktop\codexstudy
+cd /d "%~dp0"
 codex
