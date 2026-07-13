@@ -173,9 +173,19 @@ def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Im
             box_top + max(box_height, padded_text_height),
         )
 
+        # Match the overlay to the surrounding background so dark-mode
+        # screenshots don't end up with glaring light boxes.
+        region = canvas.crop(
+            (box_left, box_top, box_right, expanded_bottom)
+        ).convert("RGB")
+        sampled = region.resize((1, 1), resample=Image.Resampling.BOX)
+        bg_red, bg_green, bg_blue = sampled.getpixel((0, 0))
+        luminance = 0.299 * bg_red + 0.587 * bg_green + 0.114 * bg_blue
+        text_fill = (25, 25, 25, 255) if luminance > 128 else (240, 240, 240, 255)
+
         draw.rectangle(
             (box_left, box_top, box_right, expanded_bottom),
-            fill=(248, 248, 248, 255),
+            fill=(bg_red, bg_green, bg_blue, 255),
         )
 
         visible_height = expanded_bottom - box_top
@@ -190,7 +200,7 @@ def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Im
             draw.text(
                 (line_x, current_y),
                 line,
-                fill=(30, 30, 30, 255),
+                fill=text_fill,
                 font=font,
             )
             current_y += line_height + 4
