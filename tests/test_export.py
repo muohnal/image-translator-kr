@@ -43,7 +43,7 @@ def test_status_labels_localized():
             make_result(status="translation_failed", translated_text=None),
         ]
     )
-    assert list(dataframe["상태"]) == ["번역 완료", "건너뜀(영어 아님)", "번역 실패"]
+    assert list(dataframe["상태"]) == ["번역 완료", "건너뜀(번역 대상 아님)", "번역 실패"]
 
 
 def test_unknown_status_passes_through():

@@ -13,6 +13,7 @@ from ocr import OCRLine
 
 ENGLISH_PATTERN = re.compile(r"[A-Za-z]")
 KOREAN_PATTERN = re.compile(r"[가-힣]")
+LETTER_PATTERN = re.compile(r"[^\W\d_]", re.UNICODE)
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +38,24 @@ def clean_ocr_text(text: str) -> str:
     """Remove common OCR artifacts so the translator receives cleaner input."""
 
     tokens = text.split()
-    # Drop tokens with no letters or digits (stray '|', '~', '—' from OCR noise).
+    # Drop tokens with no letters or digits in any script
+    # (stray '|', '~', '—' from OCR noise).
     meaningful_tokens = [
-        token for token in tokens if re.search(r"[A-Za-z0-9가-힣]", token)
+        token for token in tokens if re.search(r"[^\W_]", token, re.UNICODE)
     ]
     return " ".join(meaningful_tokens)
+
+
+def contains_translatable_text(text: str) -> bool:
+    """Return True when the text has enough non-Korean letters to translate."""
+
+    letter_count = len(LETTER_PATTERN.findall(text))
+    korean_count = len(KOREAN_PATTERN.findall(text))
+    foreign_count = letter_count - korean_count
+
+    if foreign_count <= 0:
+        return False
+    return foreign_count >= korean_count
 
 
 def contains_meaningful_english(text: str) -> bool:
@@ -58,8 +72,9 @@ def contains_meaningful_english(text: str) -> bool:
 def translate_lines(
     lines: Sequence[OCRLine],
     file_name: str,
+    source_lang: str = "en",
 ) -> list[TranslationResult]:
-    """Translate OCR lines from English to Korean using a single batch request."""
+    """Translate OCR lines from the source language to Korean in one batch request."""
 
     results: list[TranslationResult] = []
     pending: list[tuple[int, str]] = []
@@ -67,7 +82,7 @@ def translate_lines(
     for line in lines:
         cleaned_text = clean_ocr_text(line.text)
 
-        if not cleaned_text or not contains_meaningful_english(cleaned_text):
+        if not cleaned_text or not contains_translatable_text(cleaned_text):
             results.append(
                 TranslationResult(
                     file_name=file_name,
@@ -103,7 +118,7 @@ def translate_lines(
     if not pending:
         return results
 
-    translator = GoogleTranslator(source="en", target="ko")
+    translator = GoogleTranslator(source=source_lang, target="ko")
     pending_texts = [text for _, text in pending]
 
     translations: list[str | None] | None

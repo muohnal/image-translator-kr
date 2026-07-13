@@ -61,7 +61,11 @@ def preprocess_image_for_ocr(image: Image.Image) -> Image.Image:
     return renormalized_image.point(lambda pixel: 255 if pixel > 128 else 0, mode="L")
 
 
-def extract_english_lines(image: Image.Image, min_confidence: float) -> list[OCRLine]:
+def extract_text_lines(
+    image: Image.Image,
+    min_confidence: float,
+    ocr_lang: str = "eng",
+) -> list[OCRLine]:
     """Extract OCR lines from an image above the confidence threshold."""
 
     def run_ocr(target_image: Image.Image) -> dict[str, list[str | int | float]]:
@@ -69,7 +73,7 @@ def extract_english_lines(image: Image.Image, min_confidence: float) -> list[OCR
 
         return pytesseract.image_to_data(
             target_image,
-            lang="eng+kor",
+            lang=f"{ocr_lang}+kor",
             config="--psm 6",
             output_type=pytesseract.Output.DICT,
         )
