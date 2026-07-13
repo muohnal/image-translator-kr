@@ -8,7 +8,7 @@ from typing import Sequence
 
 import pytesseract
 import streamlit as st
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from export import build_result_dataframe, dataframe_to_safe_csv
 from ocr import (
@@ -90,6 +90,10 @@ def run_translation_pipeline(
 
     image = Image.open(BytesIO(file_bytes))
     image.load()
+    # Camera photos often carry an EXIF rotation tag instead of rotating the
+    # pixel data itself; without this, both OCR and the preview see the
+    # image sideways.
+    image = ImageOps.exif_transpose(image)
 
     preprocessed_image = preprocess_image_for_ocr(image)
     lines = extract_text_lines(
