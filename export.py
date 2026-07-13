@@ -8,6 +8,11 @@ from translation import TranslationResult
 
 
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+STATUS_LABELS = {
+    "success": "번역 완료",
+    "skipped_non_english": "건너뜀(영어 아님)",
+    "translation_failed": "번역 실패",
+}
 
 
 def escape_csv_formula(value: str) -> str:
@@ -28,7 +33,7 @@ def build_result_dataframe(results: Sequence[TranslationResult]) -> pd.DataFrame
                 "원문": result.source_text,
                 "번역문": result.translated_text or "",
                 "신뢰도": result.confidence,
-                "상태": result.status,
+                "상태": STATUS_LABELS.get(result.status, result.status),
                 "오류": result.error_message or "",
             }
             for result in results
