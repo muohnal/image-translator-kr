@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from io import BytesIO
 from pathlib import Path
 from typing import Sequence
 
@@ -27,6 +28,27 @@ MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 
 
+@st.cache_data(show_spinner=False, max_entries=20)
+def run_translation_pipeline(
+    file_bytes: bytes,
+    file_name: str,
+    min_confidence: float,
+) -> tuple[Image.Image, Image.Image, list[TranslationResult]] | None:
+    """Run OCR, translation, and preview rendering; cached per file content."""
+
+    image = Image.open(BytesIO(file_bytes))
+    image.load()
+
+    preprocessed_image = preprocess_image_for_ocr(image)
+    lines = extract_english_lines(preprocessed_image, min_confidence=min_confidence)
+    if not lines:
+        return None
+
+    results = translate_lines(lines, file_name=file_name)
+    preview = draw_preview(image, results)
+    return image, preview, results
+
+
 def process_uploaded_image(
     uploaded_file: st.runtime.uploaded_file_manager.UploadedFile,
     min_confidence: float,
@@ -40,27 +62,30 @@ def process_uploaded_image(
         )
         return None
 
+    file_bytes = uploaded_file.getvalue()
+
     try:
-        image = Image.open(uploaded_file)
-        if image.width * image.height > MAX_IMAGE_PIXELS:
-            st.error(f"'{uploaded_file.name}' 이미지 해상도가 너무 큽니다.")
+        probe = Image.open(BytesIO(file_bytes))
+        if probe.width * probe.height > MAX_IMAGE_PIXELS:
+            st.error(
+                f"'{uploaded_file.name}' 이미지 해상도가 너무 큽니다 (최대 약 4천만 화소). "
+                "스크린샷을 자르거나 축소한 뒤 다시 시도하세요."
+            )
             return None
-        image.load()
     except UnidentifiedImageError:
         st.error(f"'{uploaded_file.name}' 파일을 이미지로 읽을 수 없습니다.")
         return None
 
-    preprocessed_image = preprocess_image_for_ocr(image)
-    lines = extract_english_lines(preprocessed_image, min_confidence=min_confidence)
-    if not lines:
+    processed = run_translation_pipeline(
+        file_bytes, uploaded_file.name, min_confidence
+    )
+    if processed is None:
         st.warning(
             f"'{uploaded_file.name}' 파일에서 조건에 맞는 영어 텍스트를 찾지 못했습니다."
         )
         return None
 
-    results = translate_lines(lines, file_name=uploaded_file.name)
-    preview = draw_preview(image, results)
-    return image, preview, results
+    return processed
 
 
 def render_results(
