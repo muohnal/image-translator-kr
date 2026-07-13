@@ -27,6 +27,45 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 
+CUSTOM_STYLE = """
+<style>
+/* 모바일 터치 타깃 확대 및 버튼 스타일 */
+.stButton > button,
+.stDownloadButton > button {
+    width: 100%;
+    min-height: 48px;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+/* 업로더 영역을 눈에 잘 띄게 */
+[data-testid="stFileUploaderDropzone"] {
+    border: 2px dashed #3B82F6;
+    border-radius: 12px;
+}
+
+/* 탭을 크게 - 모바일에서 누르기 쉽게 */
+.stTabs [data-baseweb="tab"] {
+    min-height: 44px;
+    font-size: 1rem;
+}
+
+/* Streamlit 기본 장식 숨김 (배포 앱에서 불필요) */
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+
+/* 모바일에서 본문 좌우 여백 축소로 화면 넓게 사용 */
+@media (max-width: 640px) {
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+        padding-top: 2rem;
+    }
+}
+</style>
+"""
+
 
 @st.cache_data(show_spinner=False, max_entries=20)
 def run_translation_pipeline(
@@ -132,7 +171,12 @@ def render_results(
 def main() -> None:
     """Run the Streamlit OCR translation application."""
 
-    st.set_page_config(page_title="이미지 영어-한국어 번역기", layout="centered")
+    st.set_page_config(
+        page_title="이미지 영어-한국어 번역기",
+        page_icon="🌐",
+        layout="centered",
+    )
+    st.markdown(CUSTOM_STYLE, unsafe_allow_html=True)
     st.title("이미지 영어→한국어 번역기")
     st.write("스마트폰 스크린샷 속 영어를 자동으로 찾아 한국어로 번역해 드립니다.")
     st.markdown(
