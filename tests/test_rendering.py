@@ -95,6 +95,18 @@ def test_draw_preview_skips_failed_results():
     assert preview.tobytes() == original.convert("RGB").tobytes()
 
 
+def test_draw_preview_skips_giant_garbage_box():
+    image = Image.new("RGB", (400, 200), "white")
+    draw = ImageDraw.Draw(image)
+    draw.text((50, 40), "Hello", fill="black")
+    original = image.copy()
+
+    # OCR garbage: one "line" spanning nearly the whole photo
+    giant = make_result(left=0, top=0, width=395, height=195)
+    preview = rendering.draw_preview(image, [giant])
+    assert preview.tobytes() == original.convert("RGB").tobytes()
+
+
 def test_image_to_png_bytes_round_trip():
     image = Image.new("RGB", (10, 10), "red")
     data = rendering.image_to_png_bytes(image)

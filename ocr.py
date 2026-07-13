@@ -127,23 +127,53 @@ def extract_text_lines(
 
     lines: list[OCRLine] = []
     for words in grouped.values():
-        ordered_words = sorted(words, key=lambda item: int(item["left"]))
-        line_text = " ".join(str(item["text"]) for item in ordered_words)
-        left = min(int(item["left"]) for item in ordered_words)
-        top = min(int(item["top"]) for item in ordered_words)
-        right = max(int(item["left"]) + int(item["width"]) for item in ordered_words)
-        bottom = max(int(item["top"]) + int(item["height"]) for item in ordered_words)
-        average_conf = sum(float(item["conf"]) for item in ordered_words) / len(ordered_words)
+        for segment in split_line_on_gaps(words):
+            line_text = " ".join(str(item["text"]) for item in segment)
+            left = min(int(item["left"]) for item in segment)
+            top = min(int(item["top"]) for item in segment)
+            right = max(int(item["left"]) + int(item["width"]) for item in segment)
+            bottom = max(int(item["top"]) + int(item["height"]) for item in segment)
+            average_conf = sum(float(item["conf"]) for item in segment) / len(segment)
 
-        lines.append(
-            OCRLine(
-                text=line_text,
-                confidence=round(average_conf, 1),
-                left=left,
-                top=top,
-                width=right - left,
-                height=bottom - top,
+            lines.append(
+                OCRLine(
+                    text=line_text,
+                    confidence=round(average_conf, 1),
+                    left=left,
+                    top=top,
+                    width=right - left,
+                    height=bottom - top,
+                )
             )
-        )
 
     return sorted(lines, key=lambda item: (item.top, item.left))
+
+
+def split_line_on_gaps(
+    words: list[dict[str, float | int | str]],
+) -> list[list[dict[str, float | int | str]]]:
+    """Split a Tesseract line into segments where words are far apart.
+
+    Camera photos often make Tesseract group scattered noise into one line,
+    producing a bounding box that spans the whole image. Breaking on large
+    horizontal gaps keeps each overlay confined to real text regions.
+    """
+
+    ordered_words = sorted(words, key=lambda item: int(item["left"]))
+    average_height = sum(int(item["height"]) for item in ordered_words) / len(
+        ordered_words
+    )
+    max_gap = max(30.0, average_height * 3)
+
+    segments: list[list[dict[str, float | int | str]]] = [[ordered_words[0]]]
+    for word in ordered_words[1:]:
+        previous_word = segments[-1][-1]
+        gap = int(word["left"]) - (
+            int(previous_word["left"]) + int(previous_word["width"])
+        )
+        if gap > max_gap:
+            segments.append([word])
+        else:
+            segments[-1].append(word)
+
+    return segments
