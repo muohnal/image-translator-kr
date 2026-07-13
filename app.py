@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -16,6 +18,9 @@ from ocr import (
 )
 from rendering import draw_preview, image_to_png_bytes
 from translation import TranslationResult, translate_lines
+
+
+logger = logging.getLogger(__name__)
 
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
@@ -58,26 +63,6 @@ def process_uploaded_image(
     return image, preview, results
 
 
-def configure_sidebar() -> tuple[float, str]:
-    """Render sidebar controls and return user-selected settings."""
-
-    with st.sidebar:
-        st.header("설정")
-        min_confidence = st.slider(
-            "최소 OCR 신뢰도",
-            min_value=0,
-            max_value=100,
-            value=int(MIN_CONFIDENCE),
-        )
-        tesseract_path = st.text_input(
-            "Tesseract 실행 파일 경로(선택)",
-            value="",
-            placeholder=r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        )
-
-    return float(min_confidence), tesseract_path.strip()
-
-
 def render_results(
     uploaded_file_name: str,
     image: Image.Image,
@@ -91,46 +76,62 @@ def render_results(
     skipped_count = sum(
         1 for result in results if result.status == "skipped_non_english"
     )
+    failed_count = sum(
+        1 for result in results if result.status == "translation_failed"
+    )
     preview_bytes = image_to_png_bytes(preview)
 
     with st.expander(f"이미지 미리보기: {uploaded_file_name}", expanded=expanded):
         st.caption(
-            f"번역된 줄 {translated_count}개, 한글 또는 비영문으로 건너뛴 줄 {skipped_count}개"
+            f"번역 {translated_count}개 · 건너뜀(영어 아님) {skipped_count}개 · 실패 {failed_count}개"
         )
-        original_tab, preview_tab = st.tabs(["원본", "번역 미리보기"])
-        with original_tab:
-            st.image(image, width="stretch")
+        if failed_count:
+            st.warning(
+                "일부 문장 번역에 실패했습니다. 잠시 후 다시 업로드해 보세요."
+            )
+        preview_tab, original_tab = st.tabs(["번역 미리보기", "원본"])
         with preview_tab:
             st.image(preview, width="stretch")
+        with original_tab:
+            st.image(image, width="stretch")
 
         st.download_button(
-            label=f"{uploaded_file_name} 번역 미리보기 PNG 다운로드",
+            label="번역 미리보기 PNG 저장",
             data=preview_bytes,
             file_name=f"{Path(uploaded_file_name).stem}_translated_preview.png",
             mime="image/png",
+            key=f"download_{uploaded_file_name}",
         )
 
 
 def main() -> None:
     """Run the Streamlit OCR translation application."""
 
-    st.set_page_config(page_title="이미지 영어-한국어 번역기", layout="wide")
-    st.title("이미지 영어-한국어 번역기")
-    st.write(
-        "여러 이미지를 업로드하면 영어 텍스트를 OCR로 추출하고 한국어로 번역합니다."
+    st.set_page_config(page_title="이미지 영어-한국어 번역기", layout="centered")
+    st.title("이미지 영어→한국어 번역기")
+    st.write("스마트폰 스크린샷 속 영어를 자동으로 찾아 한국어로 번역해 드립니다.")
+    st.markdown(
+        "1. 아래에서 이미지를 업로드하세요\n"
+        "2. 번역이 입혀진 미리보기를 확인하세요\n"
+        "3. 필요하면 PNG/CSV로 저장하세요"
     )
     st.caption(
         "⚠️ 추출된 텍스트는 번역을 위해 Google 번역(외부 서비스)으로 전송됩니다. "
         "민감한 개인정보나 기밀 문서가 포함된 이미지는 업로드하지 마세요."
     )
 
-    min_confidence, tesseract_path = configure_sidebar()
     try:
-        pytesseract.pytesseract.tesseract_cmd = resolve_tesseract_cmd(tesseract_path)
+        pytesseract.pytesseract.tesseract_cmd = resolve_tesseract_cmd(
+            os.environ.get("TESSERACT_CMD", "")
+        )
     except ValueError as exc:
-        st.error(str(exc))
+        logger.error("Invalid TESSERACT_CMD: %s", exc)
+        st.error("서버의 텍스트 인식 엔진 설정에 문제가 있습니다. 잠시 후 다시 시도해 주세요.")
         st.stop()
 
+    st.caption(
+        f"PNG·JPG·WEBP·BMP 지원, 장당 최대 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB / 약 4천만 화소"
+    )
     uploaded_files = st.file_uploader(
         "이미지를 업로드하세요",
         type=["png", "jpg", "jpeg", "webp", "bmp"],
@@ -143,12 +144,18 @@ def main() -> None:
 
     all_results: list[TranslationResult] = []
     processed_count = 0
+    total_files = len(uploaded_files)
+    progress = st.progress(0.0, text="이미지 처리 준비 중…")
 
     try:
-        for uploaded_file in uploaded_files:
+        for index, uploaded_file in enumerate(uploaded_files):
+            progress.progress(
+                index / total_files,
+                text=f"({index + 1}/{total_files}) '{uploaded_file.name}' 텍스트 인식·번역 중…",
+            )
             processed = process_uploaded_image(
                 uploaded_file=uploaded_file,
-                min_confidence=min_confidence,
+                min_confidence=MIN_CONFIDENCE,
             )
             if processed is None:
                 continue
@@ -164,17 +171,27 @@ def main() -> None:
                 expanded=processed_count == 1,
             )
     except pytesseract.TesseractNotFoundError:
-        st.error(
-            "Tesseract OCR이 설치되어 있지 않거나 실행 파일 경로가 올바르지 않습니다. "
-            "README를 확인하세요."
+        progress.empty()
+        logger.error("Tesseract binary not found on server")
+        st.error("서버의 텍스트 인식 엔진에 문제가 있습니다. 잠시 후 다시 시도해 주세요.")
+        st.stop()
+
+    progress.empty()
+
+    if not all_results:
+        st.warning(
+            "업로드한 이미지에서 영어 텍스트를 찾지 못했습니다. "
+            "글씨가 선명하게 보이는 스크린샷인지 확인해 주세요."
         )
         st.stop()
 
-    if not all_results:
-        st.warning("업로드한 모든 이미지에서 번역할 영어 텍스트를 찾지 못했습니다.")
-        st.stop()
-
-    st.success(f"{processed_count}개 이미지에서 번역 결과를 추출했습니다.")
+    success_line_count = sum(
+        1 for result in all_results if result.status == "success"
+    )
+    if success_line_count:
+        st.success(f"총 {success_line_count}개 문장을 번역했습니다.")
+    else:
+        st.warning("번역할 영어 문장을 찾지 못했거나 번역에 실패했습니다.")
 
     st.subheader("통합 번역 결과")
     dataframe = build_result_dataframe(all_results)

@@ -59,16 +59,12 @@ def translate_lines(
     lines: Sequence[OCRLine],
     file_name: str,
 ) -> list[TranslationResult]:
-    """Translate OCR lines from English to Korean."""
+    """Translate OCR lines from English to Korean using a single batch request."""
 
-    translator = GoogleTranslator(source="en", target="ko")
     results: list[TranslationResult] = []
+    pending: list[tuple[int, str]] = []
 
     for line in lines:
-        translated_text: str | None
-        error_message: str | None
-        status: str
-
         cleaned_text = clean_ocr_text(line.text)
 
         if not cleaned_text or not contains_meaningful_english(cleaned_text):
@@ -88,29 +84,50 @@ def translate_lines(
             )
             continue
 
-        try:
-            translated_text = translator.translate(cleaned_text)
-            error_message = None
-            status = "success"
-        except (TranslationError, ConnectionError, TimeoutError) as exc:
-            logger.warning("Translation failed for %r: %s", cleaned_text, exc)
-            translated_text = None
-            error_message = str(exc)
-            status = "translation_failed"
-
         results.append(
             TranslationResult(
                 file_name=file_name,
                 source_text=line.text,
-                translated_text=translated_text,
+                translated_text=None,
                 confidence=line.confidence,
                 left=line.left,
                 top=line.top,
                 width=line.width,
                 height=line.height,
-                status=status,
-                error_message=error_message,
+                status="translation_failed",
+                error_message=None,
             )
         )
+        pending.append((len(results) - 1, cleaned_text))
+
+    if not pending:
+        return results
+
+    translator = GoogleTranslator(source="en", target="ko")
+    pending_texts = [text for _, text in pending]
+
+    translations: list[str | None] | None
+    try:
+        translations = translator.translate_batch(pending_texts)
+    except (TranslationError, ConnectionError, TimeoutError) as exc:
+        logger.warning("Batch translation failed, falling back to per-line: %s", exc)
+        translations = None
+
+    if translations is not None:
+        for (result_index, _), translated_text in zip(pending, translations):
+            if translated_text:
+                results[result_index].translated_text = translated_text
+                results[result_index].status = "success"
+            else:
+                results[result_index].error_message = "빈 번역 결과"
+        return results
+
+    for result_index, cleaned_text in pending:
+        try:
+            results[result_index].translated_text = translator.translate(cleaned_text)
+            results[result_index].status = "success"
+        except (TranslationError, ConnectionError, TimeoutError) as exc:
+            logger.warning("Translation failed for %r: %s", cleaned_text, exc)
+            results[result_index].error_message = str(exc)
 
     return results
