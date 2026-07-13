@@ -9,6 +9,10 @@ from PIL import Image, ImageDraw, ImageFont
 from translation import TranslationResult
 
 
+# Overlays larger than this share of the image are almost certainly OCR
+# garbage (noise grouped into one giant line) and would blot out the photo.
+MAX_OVERLAY_AREA_RATIO = 0.35
+
 FONT_CANDIDATES = (
     "C:/Windows/Fonts/malgun.ttf",
     "C:/Windows/Fonts/AppleGothic.ttf",
@@ -172,6 +176,10 @@ def draw_preview(image: Image.Image, results: Sequence[TranslationResult]) -> Im
             canvas_height,
             box_top + max(box_height, padded_text_height),
         )
+
+        overlay_area = (box_right - box_left) * (expanded_bottom - box_top)
+        if overlay_area > MAX_OVERLAY_AREA_RATIO * canvas_width * canvas_height:
+            continue
 
         # Match the overlay to the surrounding background so dark-mode
         # screenshots don't end up with glaring light boxes.
