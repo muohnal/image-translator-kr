@@ -62,6 +62,40 @@ def test_contains_meaningful_english():
     assert not translation.contains_meaningful_english("OK 안녕하세요 반갑습니다")
 
 
+def test_contains_translatable_text_supports_multilingual():
+    assert translation.contains_translatable_text("Hello world")
+    assert translation.contains_translatable_text("こんにちは")
+    assert translation.contains_translatable_text("你好世界")
+    assert translation.contains_translatable_text("Bonjour le monde")
+    assert not translation.contains_translatable_text("안녕하세요")
+    assert not translation.contains_translatable_text("OK 안녕하세요 반갑습니다")
+    assert not translation.contains_translatable_text("123 456")
+
+
+def test_clean_ocr_text_keeps_cjk_tokens():
+    assert translation.clean_ocr_text("| こんにちは ~ 你好 |") == "こんにちは 你好"
+
+
+def test_translate_lines_accepts_source_lang(monkeypatch):
+    captured = {}
+
+    class RecordingTranslator:
+        def __init__(self, source, target):
+            captured["source"] = source
+            captured["target"] = target
+
+        def translate_batch(self, texts):
+            return [f"번역:{text}" for text in texts]
+
+    monkeypatch.setattr(translation, "GoogleTranslator", RecordingTranslator)
+    results = translation.translate_lines(
+        [make_line("こんにちは")], "test.png", source_lang="ja"
+    )
+    assert captured["source"] == "ja"
+    assert captured["target"] == "ko"
+    assert results[0].status == "success"
+
+
 def test_translate_lines_batch_success(monkeypatch):
     monkeypatch.setattr(translation, "GoogleTranslator", BatchTranslator)
     results = translation.translate_lines(

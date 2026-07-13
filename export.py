@@ -10,7 +10,7 @@ from translation import TranslationResult
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
 STATUS_LABELS = {
     "success": "번역 완료",
-    "skipped_non_english": "건너뜀(영어 아님)",
+    "skipped_non_english": "건너뜀(번역 대상 아님)",
     "translation_failed": "번역 실패",
 }
 

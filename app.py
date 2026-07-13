@@ -13,7 +13,7 @@ from PIL import Image, UnidentifiedImageError
 from export import build_result_dataframe, dataframe_to_safe_csv
 from ocr import (
     MIN_CONFIDENCE,
-    extract_english_lines,
+    extract_text_lines,
     preprocess_image_for_ocr,
     resolve_tesseract_cmd,
 )
@@ -26,6 +26,17 @@ logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
+
+# 표시명 -> (Tesseract 언어 코드, Google 번역 언어 코드)
+SUPPORTED_LANGUAGES = {
+    "영어": ("eng", "en"),
+    "일본어": ("jpn", "ja"),
+    "중국어(간체)": ("chi_sim", "zh-CN"),
+    "프랑스어": ("fra", "fr"),
+    "독일어": ("deu", "de"),
+    "스페인어": ("spa", "es"),
+    "자동 감지(느림)": ("eng+jpn+chi_sim+fra+deu+spa", "auto"),
+}
 
 CUSTOM_STYLE = """
 <style>
@@ -72,6 +83,8 @@ def run_translation_pipeline(
     file_bytes: bytes,
     file_name: str,
     min_confidence: float,
+    ocr_lang: str,
+    source_lang: str,
 ) -> tuple[Image.Image, Image.Image, list[TranslationResult]] | None:
     """Run OCR, translation, and preview rendering; cached per file content."""
 
@@ -79,11 +92,13 @@ def run_translation_pipeline(
     image.load()
 
     preprocessed_image = preprocess_image_for_ocr(image)
-    lines = extract_english_lines(preprocessed_image, min_confidence=min_confidence)
+    lines = extract_text_lines(
+        preprocessed_image, min_confidence=min_confidence, ocr_lang=ocr_lang
+    )
     if not lines:
         return None
 
-    results = translate_lines(lines, file_name=file_name)
+    results = translate_lines(lines, file_name=file_name, source_lang=source_lang)
     preview = draw_preview(image, results)
     return image, preview, results
 
@@ -91,6 +106,8 @@ def run_translation_pipeline(
 def process_uploaded_image(
     uploaded_file: st.runtime.uploaded_file_manager.UploadedFile,
     min_confidence: float,
+    ocr_lang: str,
+    source_lang: str,
 ) -> tuple[Image.Image, Image.Image, list[TranslationResult]] | None:
     """Process one uploaded image and return source, preview, and translation results."""
 
@@ -116,11 +133,11 @@ def process_uploaded_image(
         return None
 
     processed = run_translation_pipeline(
-        file_bytes, uploaded_file.name, min_confidence
+        file_bytes, uploaded_file.name, min_confidence, ocr_lang, source_lang
     )
     if processed is None:
         st.warning(
-            f"'{uploaded_file.name}' 파일에서 조건에 맞는 영어 텍스트를 찾지 못했습니다."
+            f"'{uploaded_file.name}' 파일에서 조건에 맞는 텍스트를 찾지 못했습니다."
         )
         return None
 
@@ -147,7 +164,7 @@ def render_results(
 
     with st.expander(f"이미지 미리보기: {uploaded_file_name}", expanded=expanded):
         st.caption(
-            f"번역 {translated_count}개 · 건너뜀(영어 아님) {skipped_count}개 · 실패 {failed_count}개"
+            f"번역 {translated_count}개 · 건너뜀(번역 대상 아님) {skipped_count}개 · 실패 {failed_count}개"
         )
         if failed_count:
             st.warning(
@@ -172,15 +189,15 @@ def main() -> None:
     """Run the Streamlit OCR translation application."""
 
     st.set_page_config(
-        page_title="이미지 영어-한국어 번역기",
+        page_title="이미지 외국어-한국어 번역기",
         page_icon="🌐",
         layout="centered",
     )
     st.markdown(CUSTOM_STYLE, unsafe_allow_html=True)
-    st.title("이미지 영어→한국어 번역기")
-    st.write("스마트폰 스크린샷 속 영어를 자동으로 찾아 한국어로 번역해 드립니다.")
+    st.title("이미지 외국어→한국어 번역기")
+    st.write("스마트폰 스크린샷 속 외국어를 자동으로 찾아 한국어로 번역해 드립니다.")
     st.markdown(
-        "1. 아래에서 이미지를 업로드하세요\n"
+        "1. 원본 언어를 선택하고 이미지를 업로드하세요\n"
         "2. 번역이 입혀진 미리보기를 확인하세요\n"
         "3. 필요하면 PNG/CSV로 저장하세요"
     )
@@ -197,6 +214,17 @@ def main() -> None:
         logger.error("Invalid TESSERACT_CMD: %s", exc)
         st.error("서버의 텍스트 인식 엔진 설정에 문제가 있습니다. 잠시 후 다시 시도해 주세요.")
         st.stop()
+
+    language_label = st.selectbox(
+        "원본 언어",
+        list(SUPPORTED_LANGUAGES),
+        index=0,
+        help=(
+            "이미지 속 텍스트의 언어를 선택하세요. 한국어로 번역됩니다. "
+            "'자동 감지'는 여러 언어를 동시에 인식하므로 느리고 정확도가 다소 떨어질 수 있습니다."
+        ),
+    )
+    ocr_lang, source_lang = SUPPORTED_LANGUAGES[language_label]
 
     st.caption(
         f"PNG·JPG·WEBP·BMP 지원, 장당 최대 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB / 약 4천만 화소"
@@ -225,6 +253,8 @@ def main() -> None:
             processed = process_uploaded_image(
                 uploaded_file=uploaded_file,
                 min_confidence=MIN_CONFIDENCE,
+                ocr_lang=ocr_lang,
+                source_lang=source_lang,
             )
             if processed is None:
                 continue
@@ -249,7 +279,7 @@ def main() -> None:
 
     if not all_results:
         st.warning(
-            "업로드한 이미지에서 영어 텍스트를 찾지 못했습니다. "
+            f"업로드한 이미지에서 {language_label} 텍스트를 찾지 못했습니다. "
             "글씨가 선명하게 보이는 스크린샷인지 확인해 주세요."
         )
         st.stop()
@@ -260,7 +290,7 @@ def main() -> None:
     if success_line_count:
         st.success(f"총 {success_line_count}개 문장을 번역했습니다.")
     else:
-        st.warning("번역할 영어 문장을 찾지 못했거나 번역에 실패했습니다.")
+        st.warning("번역할 문장을 찾지 못했거나 번역에 실패했습니다.")
 
     st.subheader("통합 번역 결과")
     dataframe = build_result_dataframe(all_results)
